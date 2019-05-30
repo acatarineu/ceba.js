@@ -1,4 +1,4 @@
-FROM trzeci/emscripten:sdk-tag-1.37.35-64bit@sha256:9776e2720ef23f5fc85b1984239bade8f67a7e447c6625936e8dec480ec525f5
+FROM trzeci/emscripten:sdk-tag-1.38.32-64bit@sha256:f352ee6980d98338453f3c6cf6beb79142fcb77e73198b7de170edc88f25d36b
 
 RUN apt-get update && \
     apt-get install -y \

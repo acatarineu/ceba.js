@@ -1,6 +1,13 @@
+// Copyright 2013 The Emscripten Authors.  All rights reserved.
+// Emscripten is available under two separate licenses, the MIT license and the
+// University of Illinois/NCSA Open Source License.  Both these licenses can be
+// found in the LICENSE file.
+
 mergeInto(LibraryManager.library, {
-  $SOCKFS__postset: '__ATINIT__.push(function() { SOCKFS.root = FS.mount(SOCKFS, {}, null); });',
-  $SOCKFS__deps: ['$FS'],
+  $SOCKFS__postset: function() {
+    addAtInit('SOCKFS.root = FS.mount(SOCKFS, {}, null);');
+  },
+  $SOCKFS__deps: ['$FS', '$ERRNO_CODES'], // TODO: avoid ERRNO_CODES
   $SOCKFS: {
     mount: function(mount) {
       // If Module['websocket'] has already been defined (e.g. for configuring
@@ -27,18 +34,18 @@ mergeInto(LibraryManager.library, {
 
       // If debug is enabled register simple default logging callbacks for each Event.
 #if SOCKET_DEBUG
-      Module['websocket']['on']('error', function(error) {Module.printErr('Socket error ' + error);});
-      Module['websocket']['on']('open', function(fd) {Module.print('Socket open fd = ' + fd);});
-      Module['websocket']['on']('listen', function(fd) {Module.print('Socket listen fd = ' + fd);});
-      Module['websocket']['on']('connection', function(fd) {Module.print('Socket connection fd = ' + fd);});
-      Module['websocket']['on']('message', function(fd) {Module.print('Socket message fd = ' + fd);});
-      Module['websocket']['on']('close', function(fd) {Module.print('Socket close fd = ' + fd);});
+      Module['websocket']['on']('error', function(error) {err('Socket error ' + error);});
+      Module['websocket']['on']('open', function(fd) {out('Socket open fd = ' + fd);});
+      Module['websocket']['on']('listen', function(fd) {out('Socket listen fd = ' + fd);});
+      Module['websocket']['on']('connection', function(fd) {out('Socket connection fd = ' + fd);});
+      Module['websocket']['on']('message', function(fd) {out('Socket message fd = ' + fd);});
+      Module['websocket']['on']('close', function(fd) {out('Socket close fd = ' + fd);});
 #endif
 
       return FS.createNode(null, '/', {{{ cDefine('S_IFDIR') }}} | 511 /* 0777 */, 0);
     },
     createSocket: function(family, type, protocol) {
-      var streaming = type&{{{ cDefine('SOCK_STREAM') }}};
+      var streaming = type & {{{ cDefine('SOCK_STREAM') }}};
       if (protocol) {
         assert(streaming == (protocol == {{{ cDefine('IPPROTO_TCP') }}})); // if SOCK_STREAM, must be tcp
       }
@@ -204,8 +211,9 @@ mergeInto(LibraryManager.library, {
             }
 
 #if SOCKET_DEBUG
-            Module.print('connect: ' + url + ', ' + subProtocols.toString());
+            out('connect: ' + url + ', ' + subProtocols.toString());
 #endif
+            // If node we use the ws library.
             var WebSocketConstructor = Module['CustomSocket'];
             ws = new WebSocketConstructor(url, opts);
             ws.binaryType = 'arraybuffer';
@@ -215,7 +223,7 @@ mergeInto(LibraryManager.library, {
         }
 
 #if SOCKET_DEBUG
-        Module.print('websocket adding peer: ' + addr + ':' + port);
+        out('websocket adding peer: ' + addr + ':' + port);
 #endif
 
         var peer = {
@@ -233,7 +241,7 @@ mergeInto(LibraryManager.library, {
         // remote end.
         if (sock.type === {{{ cDefine('SOCK_DGRAM') }}} && typeof sock.sport !== 'undefined') {
 #if SOCKET_DEBUG
-          Module.print('websocket queuing port message (port ' + sock.sport + ')');
+          out('websocket queuing port message (port ' + sock.sport + ')');
 #endif
           peer.dgram_send_queue.push(new Uint8Array([
               255, 255, 255, 255,
@@ -258,7 +266,7 @@ mergeInto(LibraryManager.library, {
 
         var handleOpen = function () {
 #if SOCKET_DEBUG
-          Module.print('websocket handle open');
+          out('websocket handle open');
 #endif
 
           Module['websocket'].emit('open', sock.stream.fd);
@@ -267,7 +275,7 @@ mergeInto(LibraryManager.library, {
             var queued = peer.dgram_send_queue.shift();
             while (queued) {
 #if SOCKET_DEBUG
-              Module.print('websocket sending queued data (' + queued.byteLength + ' bytes): ' + [Array.prototype.slice.call(new Uint8Array(queued))]);
+              out('websocket sending queued data (' + queued.byteLength + ' bytes): ' + [Array.prototype.slice.call(new Uint8Array(queued))]);
 #endif
               peer.socket.send(queued);
               queued = peer.dgram_send_queue.shift();
@@ -291,7 +299,7 @@ mergeInto(LibraryManager.library, {
           data = new Uint8Array(data);  // make a typed array view on the array buffer
 
 #if SOCKET_DEBUG
-          Module.print('websocket handle message (' + data.byteLength + ' bytes): ' + [Array.prototype.slice.call(data)]);
+          out('websocket handle message (' + data.byteLength + ' bytes): ' + [Array.prototype.slice.call(data)]);
 #endif
 
           // if this is the port message, override the peer's port with it
@@ -332,14 +340,14 @@ mergeInto(LibraryManager.library, {
       // actual sock ops
       //
       poll: function(sock) {
-        if (sock.type&{{{ cDefine('SOCK_STREAM') }}} && sock.server) {
+        if (sock.type & {{{ cDefine('SOCK_STREAM') }}} && sock.server) {
           // listen sockets should only say they're available for reading
           // if there are pending clients.
           return sock.pending.length ? ({{{ cDefine('POLLRDNORM') }}} | {{{ cDefine('POLLIN') }}}) : 0;
         }
 
         var mask = 0;
-        var dest = sock.type&{{{ cDefine('SOCK_STREAM') }}} ?  // we only care about the socket state for connection-based sockets
+        var dest = sock.type & {{{ cDefine('SOCK_STREAM') }}} ?  // we only care about the socket state for connection-based sockets
           SOCKFS.websocket_sock_ops.getPeer(sock, sock.daddr, sock.dport) :
           null;
 
@@ -471,7 +479,7 @@ mergeInto(LibraryManager.library, {
 #if SOCKET_DEBUG
           console.log('received connection from: ' + ws._socket.remoteAddress + ':' + ws._socket.remotePort);
 #endif
-          if (sock.type&{{{ cDefine('SOCK_STREAM') }}}) {
+          if (sock.type & {{{ cDefine('SOCK_STREAM') }}}) {
             var newsock = SOCKFS.createSocket(sock.family, sock.type, sock.protocol);
 
             // create a peer on the new socket
@@ -552,7 +560,7 @@ mergeInto(LibraryManager.library, {
         var dest = SOCKFS.websocket_sock_ops.getPeer(sock, addr, port);
 
         // early out if not connected with a connection-based socket
-        if (sock.type&{{{ cDefine('SOCK_STREAM') }}}) {
+        if (sock.type & {{{ cDefine('SOCK_STREAM') }}}) {
           if (!dest || dest.socket.readyState === dest.socket.CLOSING || dest.socket.readyState === dest.socket.CLOSED) {
             throw new FS.ErrnoError(ERRNO_CODES.ENOTCONN);
           } else if (dest.socket.readyState === dest.socket.CONNECTING) {
@@ -591,7 +599,7 @@ mergeInto(LibraryManager.library, {
               dest = SOCKFS.websocket_sock_ops.createPeer(sock, addr, port);
             }
 #if SOCKET_DEBUG
-            Module.print('websocket queuing (' + length + ' bytes): ' + [Array.prototype.slice.call(new Uint8Array(data))]);
+            out('websocket queuing (' + length + ' bytes): ' + [Array.prototype.slice.call(new Uint8Array(data))]);
 #endif
             dest.dgram_send_queue.push(data);
             return length;
@@ -600,7 +608,7 @@ mergeInto(LibraryManager.library, {
 
         try {
 #if SOCKET_DEBUG
-          Module.print('websocket send (' + length + ' bytes): ' + [Array.prototype.slice.call(new Uint8Array(data))]);
+          out('websocket send (' + length + ' bytes): ' + [Array.prototype.slice.call(new Uint8Array(data))]);
 #endif
           // send the actual data
           dest.socket.send(data);
@@ -611,14 +619,14 @@ mergeInto(LibraryManager.library, {
       },
       recvmsg: function(sock, length) {
         // http://pubs.opengroup.org/onlinepubs/7908799/xns/recvmsg.html
-        if (sock.type&{{{ cDefine('SOCK_STREAM') }}} && sock.server) {
+        if (sock.type & {{{ cDefine('SOCK_STREAM') }}} && sock.server) {
           // tcp servers should not be recv()'ing on the listen socket
           throw new FS.ErrnoError(ERRNO_CODES.ENOTCONN);
         }
 
         var queued = sock.recv_queue.shift();
         if (!queued) {
-          if (sock.type&{{{ cDefine('SOCK_STREAM') }}}) {
+          if (sock.type & {{{ cDefine('SOCK_STREAM') }}}) {
             var dest = SOCKFS.websocket_sock_ops.getPeer(sock, sock.daddr, sock.dport);
 
             if (!dest) {
@@ -651,14 +659,14 @@ mergeInto(LibraryManager.library, {
         };
 
 #if SOCKET_DEBUG
-        Module.print('websocket read (' + bytesRead + ' bytes): ' + [Array.prototype.slice.call(res.buffer)]);
+        out('websocket read (' + bytesRead + ' bytes): ' + [Array.prototype.slice.call(res.buffer)]);
 #endif
 
         // push back any unread data for TCP connections
-        if (sock.type&{{{ cDefine('SOCK_STREAM') }}} && bytesRead < queuedLength) {
+        if (sock.type & {{{ cDefine('SOCK_STREAM') }}} && bytesRead < queuedLength) {
           var bytesRemaining = queuedLength - bytesRead;
 #if SOCKET_DEBUG
-          Module.print('websocket read: put back ' + bytesRemaining + ' bytes');
+          out('websocket read: put back ' + bytesRemaining + ' bytes');
 #endif
           queued.data = new Uint8Array(queuedBuffer, queuedOffset + bytesRead, bytesRemaining);
           sock.recv_queue.unshift(queued);
@@ -686,16 +694,16 @@ mergeInto(LibraryManager.library, {
         if (event === 'error') {
           var sp = stackSave();
           var msg = allocate(intArrayFromString(data[2]), 'i8', ALLOC_STACK);
-          Module['dynCall_viiii'](callback, data[0], data[1], msg, userData);
+          {{{ makeDynCall('viiii') }}}(callback, data[0], data[1], msg, userData);
           stackRestore(sp);
         } else {
-          Module['dynCall_vii'](callback, data, userData);
+          {{{ makeDynCall('vii') }}}(callback, data, userData);
         }
       } catch (e) {
         if (e instanceof ExitStatus) {
           return;
         } else {
-          if (e && typeof e === 'object' && e.stack) Module.printErr('exception thrown: ' + [e, e.stack]);
+          if (e && typeof e === 'object' && e.stack) err('exception thrown: ' + [e, e.stack]);
           throw e;
         }
       }

@@ -200,10 +200,10 @@ var SyscallsLibrary = {
     },
 #endif // SYSCALLS_REQUIRE_FILESYSTEM
     __mywrite_sockaddr: function(sa, family, addr, port, addrlen) {
-      if (addrlen && family === 2) {
-        {{{ makeSetValue('addrlen', 0, 16, 'i32') }}};
-      } else if (addrlen && family === 10) {
-        {{{ makeSetValue('addrlen', 0, 28, 'i32') }}};
+      if (addrlen && family === {{{ cDefine('AF_INET') }}}) {
+        {{{ makeSetValue('addrlen', 0, C_STRUCTS.sockaddr_in.__size__, 'i32') }}};
+      } else if (addrlen && family === {{{ cDefine('AF_INET6') }}}) {
+        {{{ makeSetValue('addrlen', 0, C_STRUCTS.sockaddr_in6.__size__, 'i32') }}};
       } else {
         err('__mywrite_sockaddr error ' + addrl + ' ' + family);
       }
